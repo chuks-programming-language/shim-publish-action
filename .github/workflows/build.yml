@@ -150,28 +150,39 @@ jobs:
           CHUKS_VERSION: ${{ inputs.chuks-version }}
         run: |
           set -euo pipefail
+          # Map shim-publish-action platform IDs to chuks release asset names
+          # (release assets use Go's GOARCH: amd64/arm64).
           case "${{ matrix.platform }}" in
-            darwin-arm64)    ASSET="chuks-darwin-arm64.tar.gz" ;;
-            darwin-x86_64)   ASSET="chuks-darwin-x86_64.tar.gz" ;;
-            linux-x86_64)    ASSET="chuks-linux-x86_64.tar.gz" ;;
-            linux-aarch64)   ASSET="chuks-linux-aarch64.tar.gz" ;;
-            windows-x86_64)  ASSET="chuks-windows-x86_64.zip" ;;
+            darwin-arm64)    BASE="chuks-darwin-arm64";  EXT="tar.gz" ;;
+            darwin-x86_64)   BASE="chuks-darwin-amd64";  EXT="tar.gz" ;;
+            linux-x86_64)    BASE="chuks-linux-amd64";   EXT="tar.gz" ;;
+            linux-aarch64)   BASE="chuks-linux-arm64";   EXT="tar.gz" ;;
+            windows-x86_64)  BASE="chuks-windows-amd64"; EXT="zip" ;;
           esac
-          REPO="chuks-programming-language/chuks"
+          ASSET="$BASE.$EXT"
+          REPO="chuks-programming-language/releases"
           if [[ "$CHUKS_VERSION" == "latest" ]]; then
             URL="https://github.com/$REPO/releases/latest/download/$ASSET"
           else
             URL="https://github.com/$REPO/releases/download/$CHUKS_VERSION/$ASSET"
           fi
           mkdir -p "$HOME/chuks/bin"
-          if [[ "$ASSET" == *.zip ]]; then
+          if [[ "$EXT" == "zip" ]]; then
             curl -fsSL -o /tmp/chuks.zip "$URL"
-            unzip -o /tmp/chuks.zip -d "$HOME/chuks/bin"
+            unzip -o /tmp/chuks.zip -d /tmp/chuks-extract
+            cp /tmp/chuks-extract/"$BASE"/chuks* "$HOME/chuks/bin/" 2>/dev/null \
+              || cp /tmp/chuks-extract/chuks* "$HOME/chuks/bin/"
           else
-            curl -fsSL "$URL" | tar -xz -C "$HOME/chuks/bin"
+            curl -fsSL "$URL" | tar -xz -C /tmp
+            if [[ -d "/tmp/$BASE" ]]; then
+              cp "/tmp/$BASE/chuks" "$HOME/chuks/bin/chuks"
+            else
+              cp /tmp/chuks "$HOME/chuks/bin/chuks"
+            fi
           fi
-          chmod +x "$HOME/chuks/bin/chuks"* || true
+          chmod +x "$HOME/chuks/bin/"* || true
           echo "$HOME/chuks/bin" >> "$GITHUB_PATH"
+          "$HOME/chuks/bin/chuks" --version || true
 
       - name: Publish prebuilt
         shell: bash
