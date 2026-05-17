@@ -1,0 +1,185 @@
+name: Build and publish shim prebuilts
+
+on:
+  workflow_call:
+    inputs:
+      shim-dir:
+        description: "Path to the directory containing Cargo.toml"
+        required: false
+        type: string
+        default: "shim"
+      release:
+        description: "Build with --release"
+        required: false
+        type: boolean
+        default: true
+      platforms:
+        description: "Newline-separated list of platform IDs to build (default: all five)"
+        required: false
+        type: string
+        default: |
+          darwin-arm64
+          darwin-x86_64
+          linux-x86_64
+          linux-aarch64
+          windows-x86_64
+      chuks-version:
+        description: "chuks CLI version to install (defaults to latest release)"
+        required: false
+        type: string
+        default: "latest"
+      registry-url:
+        description: "Override registry endpoint (default https://packages.chuks.org)"
+        required: false
+        type: string
+        default: "https://packages.chuks.org"
+    secrets:
+      CHUKS_TOKEN:
+        description: "Registry API token with packages:publish scope"
+        required: true
+
+jobs:
+  resolve-matrix:
+    name: Resolve build matrix
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A RUNNERS=(
+            [darwin-arm64]="macos-14"
+            [darwin-x86_64]="macos-13"
+            [linux-x86_64]="ubuntu-22.04"
+            [linux-aarch64]="ubuntu-22.04-arm"
+            [windows-x86_64]="windows-2022"
+          )
+          declare -A TARGETS=(
+            [darwin-arm64]="aarch64-apple-darwin"
+            [darwin-x86_64]="x86_64-apple-darwin"
+            [linux-x86_64]="x86_64-unknown-linux-gnu"
+            [linux-aarch64]="aarch64-unknown-linux-gnu"
+            [windows-x86_64]="x86_64-pc-windows-msvc"
+          )
+          entries=()
+          while IFS= read -r plat; do
+            plat="$(echo "$plat" | tr -d '[:space:]')"
+            [[ -z "$plat" ]] && continue
+            if [[ -z "${RUNNERS[$plat]+x}" ]]; then
+              echo "::error::Unknown platform: $plat" >&2
+              exit 1
+            fi
+            entries+=("{\"platform\":\"$plat\",\"runner\":\"${RUNNERS[$plat]}\",\"target\":\"${TARGETS[$plat]}\"}")
+          done <<< "${{ inputs.platforms }}"
+          joined=$(IFS=,; echo "${entries[*]}")
+          echo "matrix={\"include\":[${joined}]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.platform }}
+    needs: resolve-matrix
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.resolve-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ inputs.shim-dir }}/target
+          key: shim-${{ matrix.platform }}-${{ hashFiles(format('{0}/Cargo.lock', inputs.shim-dir), format('{0}/Cargo.toml', inputs.shim-dir)) }}
+          restore-keys: |
+            shim-${{ matrix.platform }}-
+
+      - name: Build shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARGS=(build --manifest-path "${{ inputs.shim-dir }}/Cargo.toml" --target "${{ matrix.target }}")
+          if [[ "${{ inputs.release }}" == "true" ]]; then
+            ARGS+=(--release)
+          fi
+          cargo "${ARGS[@]}"
+
+      - name: Locate produced cdylib
+        id: locate
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROFILE="debug"
+          if [[ "${{ inputs.release }}" == "true" ]]; then PROFILE="release"; fi
+          DIR="${{ inputs.shim-dir }}/target/${{ matrix.target }}/$PROFILE"
+          case "${{ matrix.platform }}" in
+            darwin-*)   EXT="dylib" ;;
+            linux-*)    EXT="so" ;;
+            windows-*)  EXT="dll" ;;
+          esac
+          FILE=$(find "$DIR" -maxdepth 1 -type f -name "*.$EXT" ! -name "*.d.$EXT" | head -n 1)
+          if [[ -z "$FILE" ]]; then
+            echo "::error::No .$EXT found in $DIR" >&2
+            ls -la "$DIR" || true
+            exit 1
+          fi
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "Built: $FILE"
+
+      - name: Sign macOS dylib
+        if: startsWith(matrix.platform, 'darwin-')
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="${{ steps.locate.outputs.file }}"
+          xattr -cr "$FILE"
+          codesign --force --sign - "$FILE"
+
+      - name: Install chuks CLI
+        shell: bash
+        env:
+          CHUKS_VERSION: ${{ inputs.chuks-version }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.platform }}" in
+            darwin-arm64)    ASSET="chuks-darwin-arm64.tar.gz" ;;
+            darwin-x86_64)   ASSET="chuks-darwin-x86_64.tar.gz" ;;
+            linux-x86_64)    ASSET="chuks-linux-x86_64.tar.gz" ;;
+            linux-aarch64)   ASSET="chuks-linux-aarch64.tar.gz" ;;
+            windows-x86_64)  ASSET="chuks-windows-x86_64.zip" ;;
+          esac
+          REPO="chuks-programming-language/chuks"
+          if [[ "$CHUKS_VERSION" == "latest" ]]; then
+            URL="https://github.com/$REPO/releases/latest/download/$ASSET"
+          else
+            URL="https://github.com/$REPO/releases/download/$CHUKS_VERSION/$ASSET"
+          fi
+          mkdir -p "$HOME/chuks/bin"
+          if [[ "$ASSET" == *.zip ]]; then
+            curl -fsSL -o /tmp/chuks.zip "$URL"
+            unzip -o /tmp/chuks.zip -d "$HOME/chuks/bin"
+          else
+            curl -fsSL "$URL" | tar -xz -C "$HOME/chuks/bin"
+          fi
+          chmod +x "$HOME/chuks/bin/chuks"* || true
+          echo "$HOME/chuks/bin" >> "$GITHUB_PATH"
+
+      - name: Publish prebuilt
+        shell: bash
+        env:
+          CHUKS_TOKEN: ${{ secrets.CHUKS_TOKEN }}
+          CHUKS_REGISTRY_URL: ${{ inputs.registry-url }}
+        run: |
+          set -euo pipefail
+          chuks publish --prebuilt-only \
+            --platform "${{ matrix.platform }}" \
+            --file "${{ steps.locate.outputs.file }}"
