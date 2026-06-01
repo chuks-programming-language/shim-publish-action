@@ -1,7 +1,7 @@
 # shim-publish-action
 
 Reusable GitHub Actions workflow for building and publishing native Rust/C
-shim binaries to the [Chuks package registry](https://packages.chuks.org).
+shim binaries to the [Chuks package registry](https://registry.chuks.org).
 
 This is the Chuks equivalent of [cibuildwheel](https://cibuildwheel.pypa.io/)
 for Python — it cross-compiles your package's `shim/` cdylib on every
@@ -10,13 +10,13 @@ a Rust or C toolchain installed.
 
 ## Supported platforms
 
-| Platform ID       | Runner                | Target triple                 |
-| ----------------- | --------------------- | ----------------------------- |
-| `darwin-arm64`    | `macos-14`            | `aarch64-apple-darwin`        |
-| `darwin-x86_64`   | `macos-13`            | `x86_64-apple-darwin`         |
-| `linux-x86_64`    | `ubuntu-22.04`        | `x86_64-unknown-linux-gnu`    |
-| `linux-aarch64`   | `ubuntu-22.04-arm`    | `aarch64-unknown-linux-gnu`   |
-| `windows-x86_64`  | `windows-2022`        | `x86_64-pc-windows-msvc`      |
+| Platform ID      | Runner             | Target triple               |
+| ---------------- | ------------------ | --------------------------- |
+| `darwin-arm64`   | `macos-14`         | `aarch64-apple-darwin`      |
+| `darwin-x86_64`  | `macos-13`         | `x86_64-apple-darwin`       |
+| `linux-x86_64`   | `ubuntu-22.04`     | `x86_64-unknown-linux-gnu`  |
+| `linux-aarch64`  | `ubuntu-22.04-arm` | `aarch64-unknown-linux-gnu` |
+| `windows-x86_64` | `windows-2022`     | `x86_64-pc-windows-msvc`    |
 
 ## Usage
 
@@ -39,9 +39,9 @@ jobs:
   publish:
     uses: chuks-programming-language/shim-publish-action/.github/workflows/build.yml@v1
     with:
-      shim-dir: shim                       # path to Cargo.toml, default "shim"
-      release: true                        # cargo build --release, default true
-      platforms: |                         # optional subset, default all five
+      shim-dir: shim # path to Cargo.toml, default "shim"
+      release: true # cargo build --release, default true
+      platforms: | # optional subset, default all five
         darwin-arm64
         darwin-x86_64
         linux-x86_64
@@ -67,7 +67,7 @@ For each platform in the matrix:
 5. Installs the matching `chuks` CLI release.
 6. Runs `chuks publish --prebuilt-only --platform <id> --file <built-lib>`,
    which sha256-hashes the binary, base64-encodes, and POSTs it to
-   `https://packages.chuks.org/packages/<name>/<version>/prebuilt`.
+   `https://registry.chuks.org/backend/api/packages/<name>/<version>/prebuilt`.
 
 The registry rejects overwrites (HTTP 409), so a successful publish for a
 given `(name, version, platform)` triple is immutable. Re-running the

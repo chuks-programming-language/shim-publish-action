@@ -29,10 +29,10 @@ on:
         type: string
         default: "latest"
       registry-url:
-        description: "Override registry endpoint (default https://packages.chuks.org)"
+        description: "Override registry endpoint (CLI appends /api). Default https://registry.chuks.org/backend"
         required: false
         type: string
-        default: "https://packages.chuks.org"
+        default: "https://registry.chuks.org/backend"
     secrets:
       CHUKS_TOKEN:
         description: "Registry API token with packages:publish scope"
