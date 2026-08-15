@@ -33,6 +33,21 @@ on:
         required: false
         type: string
         default: "https://registry.chuks.org/backend"
+      apt-packages:
+        description: "Extra apt packages to install on Linux runners before building (space-separated). E.g. shims that build FFmpeg from source need 'nasm yasm pkg-config clang libclang-dev'."
+        required: false
+        type: string
+        default: ""
+      brew-packages:
+        description: "Extra Homebrew packages to install on macOS runners before building (space-separated)."
+        required: false
+        type: string
+        default: ""
+      choco-packages:
+        description: "Extra Chocolatey packages to install on Windows runners before building (space-separated)."
+        required: false
+        type: string
+        default: ""
     secrets:
       CHUKS_TOKEN:
         description: "Registry API token with packages:publish scope"
@@ -86,6 +101,34 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # Optional per-OS system packages, installed before the build. Shims that
+      # compile native libraries from source often need build tools the runner
+      # image lacks (e.g. FFmpeg's `build` feature needs `nasm` on x86). All
+      # three inputs default to empty, so this is a no-op unless a caller opts in.
+      - name: Install system packages
+        if: ${{ inputs.apt-packages != '' || inputs.brew-packages != '' || inputs.choco-packages != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Linux)
+              if [[ -n "${{ inputs.apt-packages }}" ]]; then
+                sudo apt-get update
+                sudo apt-get install -y --no-install-recommends ${{ inputs.apt-packages }}
+              fi
+              ;;
+            macOS)
+              if [[ -n "${{ inputs.brew-packages }}" ]]; then
+                brew install ${{ inputs.brew-packages }} || true
+              fi
+              ;;
+            Windows)
+              if [[ -n "${{ inputs.choco-packages }}" ]]; then
+                choco install -y ${{ inputs.choco-packages }}
+              fi
+              ;;
+          esac
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
